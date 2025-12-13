@@ -1,36 +1,22 @@
+# Pygram
+
 <p align="center">
-    <a href="https://github.com/Mayuri-Chan/pyrofok">
-        <img src="https://docs.pyrogram.org/_static/pyrogram.png" alt="Pyrofork" width="128">
-    </a>
-    <br>
-    <b>Telegram MTProto API Framework for Python</b>
-    <br>
-    <a href="https://github.com/Mayuri-Chan">
-        Homepage
-    </a>
-    •
-    <a href="https://pyrofork.wulan17.top">
-        Documentation
-    </a>
-    •
-    <a href="https://github.com/Mayuri-Chan/pyrofork/issues">
-        Issues
-    </a>
-    •
-    <a href="https://t.me/MayuriChan_Chat">
-        Support Chat
-    </a>
-    •
-    <a href="https://t.me/Pyrofork_CH">
-        News/Releases
-    </a>
+  <b>Elegant, modern, and fully asynchronous Telegram MTProto framework for Python</b>
 </p>
 
-## Pyrofork
+---
 
-> Elegant, modern and asynchronous Telegram MTProto API framework in Python for users and bots
+## Introduction
 
-``` python
+**Pygram** is a modern, elegant, and fully asynchronous MTProto API framework for Telegram, designed for both **user accounts** and **bots**. It provides a clean and intuitive Python interface to interact with Telegram’s core API, while still exposing powerful low-level capabilities when you need them.
+
+Whether you're building automation tools, chat utilities, music bots, or full‑fledged Telegram clients, Pygram gives you the flexibility, performance, and developer experience you expect from a modern framework.
+
+---
+
+## Quick Example
+
+```python
 from pyrogram import Client, filters
 
 app = Client("my_account")
@@ -38,40 +24,38 @@ app = Client("my_account")
 
 @app.on_message(filters.private)
 async def hello(client, message):
-    await message.reply("Hello from Pyrofork!")
+    await message.reply("Hello from Pygram!")
 
 
 app.run()
 ```
 
-**Pyrofork** is a modern, elegant and asynchronous [MTProto API](https://pyrofork.wulan17.top/main/topics/mtproto-vs-botapi)
-framework. It enables you to easily interact with the main Telegram API through a user account (custom client) or a bot
-identity (bot API alternative) using Python.
+---
 
-### Support
+## Key Features
 
-If you'd like to support Pyrofork, you can consider:
+* 🚀 Ready to Use – Install with pip and start immediately
+* 🧠 Easy & Intuitive – Clean, Pythonic API
+* ✨ Elegant – Developer‑friendly abstractions
+* ⚡ Fast – Powered by TgCrypto (C based)
+* 🧩 Type‑hinted – Excellent IDE support
+* 🔄 Fully Asynchronous – Async-first design
+* 🛠 Powerful – Full Telegram API access
 
-- [Become a GitHub sponsor](https://github.com/sponsors/Mayuri-Chan).
+---
 
-### Key Features
+## Installation
 
-- **Ready**: Install Pyrofork with pip and start building your applications right away.
-- **Easy**: Makes the Telegram API simple and intuitive, while still allowing advanced usages.
-- **Elegant**: Low-level details are abstracted and re-presented in a more convenient way.
-- **Fast**: Boosted up by [TgCrypto](https://github.com/pyrogram/tgcrypto), a high-performance cryptography library written in C.  
-- **Type-hinted**: Types and methods are all type-hinted, enabling excellent editor support.
-- **Async**: Fully asynchronous (also usable synchronously if wanted, for convenience).
-- **Powerful**: Full access to Telegram's API to execute any official client action and more.
-
-### Installing
-
-``` bash
-pip3 install pyrofork
+```bash
+pip3 install pygram
 ```
 
-### Resources
+Or install the latest development version directly from GitHub:
 
-- Check out the docs at https://pyrofork.wulan17.top to learn more about Pyrofork, get started right
-away and discover more in-depth material for building your client applications.
-- Join the official group at https://t.me/MayuriChan_Chat and stay tuned for news, updates and announcements.
+```bash
+pip3 install git+https://github.com/growxupdate/pygram.git
+```
+
+---
+
+> Pygram is built for developers who want speed, clarity, and full control over Telegram’s MTProto API.
