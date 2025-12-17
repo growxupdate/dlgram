@@ -42,6 +42,10 @@ from pyrogram import raw
 from pyrogram import utils
 from pyrogram.crypto import aes
 from pyrogram.errors import CDNFileHashMismatch
+
+
+from pyrogram.errors import AuthBytesInvalid
+
 from pyrogram.errors import (
     SessionPasswordNeeded,
     VolumeLocNotFound, ChannelPrivate,
@@ -307,6 +311,7 @@ class Client(Methods):
         self.client_platform = client_platform
         self.max_message_cache_size = max_message_cache_size
         self.max_message_cache_size = max_message_cache_size
+        self.business_connections = {}
         self.max_business_user_connection_cache_size = max_business_user_connection_cache_size
 
         self.executor = ThreadPoolExecutor(self.workers, thread_name_prefix="Handler")
@@ -339,8 +344,9 @@ class Client(Methods):
         self.parser = Parser(self)
 
         self.session = None
-
+        self.sessions = {}
         self.media_sessions = {}
+        self.sessions_lock = asyncio.Lock()
         self.media_sessions_lock = asyncio.Lock()
 
         self.save_file_semaphore = asyncio.Semaphore(self.max_concurrent_transmissions)
@@ -1134,7 +1140,7 @@ class Client(Methods):
                 file_path = os.path.splitext(temp_file_path)[0]
                 shutil.move(temp_file_path, file_path)
                 return file_path
-
+                
     async def get_file(
         self,
         file_id: FileId,
@@ -1143,7 +1149,7 @@ class Client(Methods):
         offset: int = 0,
         progress: Callable = None,
         progress_args: tuple = ()
-    ) -> Optional[AsyncGenerator[bytes, None]]:
+    ) -> AsyncGenerator[bytes, None]:
         async with self.get_file_semaphore:
             file_type = file_id.file_type
 
@@ -1192,8 +1198,7 @@ class Client(Methods):
             dc_id = file_id.dc_id
 
             try:
-                # ✅ REUSED MEDIA SESSION (DC-aware)
-                session = await self.get_media_session(dc_id)
+                session = await self.get_session(dc_id, is_media=True)
 
                 r = await session.invoke(
                     raw.functions.upload.GetFile(
@@ -1207,6 +1212,7 @@ class Client(Methods):
                 if isinstance(r, raw.types.upload.File):
                     while True:
                         chunk = r.bytes
+
                         yield chunk
 
                         current += 1
@@ -1240,81 +1246,85 @@ class Client(Methods):
                         )
 
                 elif isinstance(r, raw.types.upload.FileCdnRedirect):
-                    # ✅ REUSED CDN SESSION
-                    cdn_session = await self.get_media_session(dc_id, is_cdn=True)
 
-                    while True:
-                        r2 = await cdn_session.invoke(
-                            raw.functions.upload.GetCdnFile(
-                                file_token=r.file_token,
-                                offset=offset_bytes,
-                                limit=chunk_size
-                            )
-                        )
+                    cdn_session = await self.get_session(dc_id, is_cdn=True, temporary=True)
 
-                        if isinstance(r2, raw.types.upload.CdnFileReuploadNeeded):
-                            try:
-                                await session.invoke(
-                                    raw.functions.upload.ReuploadCdnFile(
-                                        file_token=r.file_token,
-                                        request_token=r2.request_token
-                                    )
+                    try:
+                        while True:
+                            r2 = await cdn_session.invoke(
+                                raw.functions.upload.GetCdnFile(
+                                    file_token=r.file_token,
+                                    offset=offset_bytes,
+                                    limit=chunk_size
                                 )
-                            except VolumeLocNotFound:
+                            )
+
+                            if isinstance(r2, raw.types.upload.CdnFileReuploadNeeded):
+                                try:
+                                    await session.invoke(
+                                        raw.functions.upload.ReuploadCdnFile(
+                                            file_token=r.file_token,
+                                            request_token=r2.request_token
+                                        )
+                                    )
+                                except VolumeLocNotFound:
+                                    break
+                                else:
+                                    continue
+
+                            chunk = r2.bytes
+
+                            # https://core.telegram.org/cdn#decrypting-files
+                            decrypted_chunk = await self.loop.run_in_executor(
+                                self.executor,
+                                aes.ctr256_decrypt,
+                                chunk,
+                                r.encryption_key,
+                                bytearray(r.encryption_iv[:-4] + (offset_bytes // 16).to_bytes(4, "big"))
+                            )
+
+                            hashes = await session.invoke(
+                                raw.functions.upload.GetCdnFileHashes(
+                                    file_token=r.file_token,
+                                    offset=offset_bytes
+                                )
+                            )
+
+                            # https://core.telegram.org/cdn#verifying-files
+                            def _check_all_hashes():
+                                for i, h in enumerate(hashes):
+                                    cdn_chunk = decrypted_chunk[h.limit * i: h.limit * (i + 1)]
+                                    CDNFileHashMismatch.check(
+                                        h.hash == sha256(cdn_chunk).digest(),
+                                        "h.hash == sha256(cdn_chunk).digest()"
+                                    )
+
+                            await self.loop.run_in_executor(self.executor, _check_all_hashes)
+
+                            yield decrypted_chunk
+
+                            current += 1
+                            offset_bytes += chunk_size
+
+                            if progress:
+                                func = functools.partial(
+                                    progress,
+                                    min(offset_bytes, file_size) if file_size != 0 else offset_bytes,
+                                    file_size,
+                                    *progress_args
+                                )
+
+                                if inspect.iscoroutinefunction(progress):
+                                    await func()
+                                else:
+                                    await self.loop.run_in_executor(self.executor, func)
+
+                            if len(chunk) < chunk_size or current >= total:
                                 break
-                            else:
-                                continue
-
-                        chunk = r2.bytes
-
-                        # https://core.telegram.org/cdn#decrypting-files
-                        decrypted_chunk = aes.ctr256_decrypt(
-                            chunk,
-                            r.encryption_key,
-                            bytearray(
-                                r.encryption_iv[:-4]
-                                + (offset_bytes // 16).to_bytes(4, "big")
-                            )
-                        )
-
-                        hashes = await session.invoke(
-                            raw.functions.upload.GetCdnFileHashes(
-                                file_token=r.file_token,
-                                offset=offset_bytes
-                            )
-                        )
-
-                        # https://core.telegram.org/cdn#verifying-files
-                        for i, h in enumerate(hashes):
-                            cdn_chunk = decrypted_chunk[h.limit * i: h.limit * (i + 1)]
-                            CDNFileHashMismatch.check(
-                                h.hash == sha256(cdn_chunk).digest(),
-                                "h.hash == sha256(cdn_chunk).digest()"
-                            )
-
-                        yield decrypted_chunk
-
-                        current += 1
-                        offset_bytes += chunk_size
-
-                        if progress:
-                            func = functools.partial(
-                                progress,
-                                min(offset_bytes, file_size)
-                                if file_size != 0
-                                else offset_bytes,
-                                file_size,
-                                *progress_args
-                            )
-
-                            if inspect.iscoroutinefunction(progress):
-                                await func()
-                            else:
-                                await self.loop.run_in_executor(self.executor, func)
-
-                        if len(chunk) < chunk_size or current >= total:
-                            break
-
+                    except Exception as e:
+                        raise e
+                    finally:
+                        await cdn_session.stop()
             except pyrogram.StopTransmission:
                 raise
             except pyrogram.errors.FloodWait:
@@ -1322,69 +1332,225 @@ class Client(Methods):
             except Exception as e:
                 log.exception(e)
 
-    async def get_media_session(
+    async def get_session(
         self,
-        dc_id: int,
-        is_cdn: bool = False
-    ) -> Session:
-        async with self.media_sessions_lock:
-            key = (dc_id, is_cdn)
+        dc_id: Optional[int] = None,
+        is_media: Optional[bool] = False,
+        is_cdn: Optional[bool] = False,
+        business_connection_id: Optional[str] = None,
+        export_authorization: Optional[bool] = True,
+        server_address: Optional[str] = None,
+        port: Optional[int] = None,
+        temporary: Optional[bool] = False
+    ) -> "Session":
+        """Get existing session or create a new one.
 
-            # Reuse existing media/CDN session
-            if key in self.media_sessions:
-                return self.media_sessions[key]
+        Parameters:
+            dc_id (``int``, *optional*):
+                Datacenter identifier.
 
-            # Get DC option (media / cdn aware)
-            dc_option = await self.get_dc_option(
-                dc_id,
-                is_media=not is_cdn,
-                is_cdn=is_cdn,
-                ipv6=self.ipv6
-            )
+            is_media (``bool``, *optional*):
+                Pass True to get or create a media session.
 
-            # Select auth key
-            if dc_id == await self.storage.dc_id():
-                auth_key = await self.storage.auth_key()
-            else:
+            is_cdn (``bool``, *optional*):
+                Pass True to get or create a cdn session.
+
+            business_connection_id (``str``, *optional*):
+                Business connection identifier.
+
+            export_authorization (``bool``, *optional*):
+                Pass True to export authorization after creating the session.
+                Used only when creating a new session.
+
+            server_address (``str``, *optional*):
+                Custom server address to connect to.
+                Used only when creating a new session.
+
+            port (``int``, *optional*):
+                Custom port to connect to.
+                Used only when creating a new session.
+
+            temporary (``bool``, *optional*):
+                Create temporary session instead of getting from storage.
+                Used only when uploading/downloading and don't forget to stop it.
+        """
+        if not dc_id:
+            dc_id = await self.storage.dc_id()
+
+        if business_connection_id:
+            dc_id = self.business_connections.get(business_connection_id)
+
+            if dc_id is None:
+                connection = await self.session.invoke(
+                    raw.functions.account.GetBotBusinessConnection(
+                        connection_id=business_connection_id
+                    )
+                )
+
+                dc_id = self.business_connections[business_connection_id] = connection.updates[0].connection.dc_id
+
+        is_current_dc = await self.storage.dc_id() == dc_id
+
+        if not temporary and is_current_dc and not is_media:
+            return self.session
+
+        sessions = self.media_sessions if is_media else self.sessions
+
+        if not temporary and sessions.get(dc_id):
+            return sessions[dc_id]
+
+        if not server_address or not port:
+            dc_option = await self.get_dc_option(dc_id, is_media=is_media, ipv6=self.ipv6, is_cdn=is_cdn)
+
+            server_address = server_address or dc_option.ip_address
+            port = port or dc_option.port
+
+        if is_media:
+            auth_key = (await self.get_session(dc_id)).auth_key
+        else:
+            if not is_current_dc:
                 auth_key = await Auth(
                     self,
                     dc_id,
-                    dc_option.ip_address,
-                    dc_option.port,
+                    server_address,
+                    port,
                     await self.storage.test_mode()
                 ).create()
+            else:
+                auth_key = await self.storage.auth_key()
 
-            # Create media/CDN session
-            session = Session(
-                self,
-                dc_id,
-                dc_option.ip_address,
-                dc_option.port,
-                auth_key,
-                await self.storage.test_mode(),
-                is_media=True,
-                is_cdn=is_cdn
-            )
+        session = Session(
+            self,
+            dc_id,
+            server_address,
+            port,
+            auth_key,
+            await self.storage.test_mode(),
+            is_media=is_media
+        )
 
-            await session.start()
+        if not temporary:
+            sessions[dc_id] = session
 
-            # Export authorization for non-current DC
-            if dc_id != await self.storage.dc_id():
+        await session.start()
+
+        if not is_current_dc and export_authorization:
+            for _ in range(3):
                 exported_auth = await self.invoke(
                     raw.functions.auth.ExportAuthorization(
                         dc_id=dc_id
                     )
                 )
-                await session.invoke(
-                    raw.functions.auth.ImportAuthorization(
-                        id=exported_auth.id,
-                        bytes=exported_auth.bytes
-                    )
-                )
 
-            # Cache the session for reuse
-            self.media_sessions[key] = session
-            return session
+                try:
+                    await session.invoke(
+                        raw.functions.auth.ImportAuthorization(
+                            id=exported_auth.id,
+                            bytes=exported_auth.bytes
+                        )
+                    )
+                except AuthBytesInvalid:
+                    continue
+                else:
+                    break
+            else:
+                await session.stop()
+                raise AuthBytesInvalid
+
+        return session
+
+    async def get_dc_option(
+        self,
+        dc_id: int = None,
+        is_media: bool = False,
+        is_cdn: bool = False,
+        ipv6: bool = False
+    ) -> "raw.types.DcOption":
+        self.__config = await self.invoke(raw.functions.help.GetConfig())
+
+        if dc_id is None:
+            dc_id = self.__config.this_dc
+
+        options = [dc for dc in self.__config.dc_options if dc.id == dc_id and dc.ipv6 == ipv6] # type: List[raw.types.DcOption]
+
+        if not options:
+            raise ValueError(f"DC{dc_id} not found")
+
+        if is_cdn:
+            cdn_options = [dc for dc in options if dc.cdn]
+
+            if cdn_options:
+                return cdn_options[0]
+
+            log.debug(
+                "No CDN datacenter found for DC%s, falling back to media DC",
+                dc_id
+            )
+
+            is_media = True
+
+        if is_media:
+            media_options = [dc for dc in options if dc.media_only]
+
+            if media_options:
+                return media_options[0]
+
+            log.debug(
+                "No media datacenter found for DC%s, falling back to prod DC",
+                dc_id
+            )
+
+        prod_options = [dc for dc in options if not dc.media_only]
+
+        if prod_options:
+            return prod_options[0]
+
+        raise ValueError("No suitable DC found")
+
+    async def set_dc(
+        self,
+        dc_id: Optional[int] = None,
+        server_address: Optional[str] = None,
+        port: Optional[int] = None
+    ):
+        """Set configuration for the specified datacenter.
+
+        .. note::
+
+            Be careful with this method, you can easily break your session.
+
+        Parameters:
+            dc_id (``int``, *optional*):
+                Datacenter identifier.
+                Defaults to the current datacenter.
+
+            server_address (``str``, *optional*):
+                Custom server address.
+
+            port (``int``, *optional*):
+                Custom port.
+        """
+        if not self.__config:
+            self.__config = await self.invoke(raw.functions.help.GetConfig())
+
+        dc_id = dc_id or self.__config.this_dc
+        dc_option = await self.get_dc_option(dc_id, ipv6=self.ipv6)
+
+        server_address = server_address or dc_option.ip_address
+        port = port or dc_option.port
+
+        await self.storage.dc_id(dc_id)
+        await self.storage.server_address(server_address)
+        await self.storage.port(port)
+
+        if self.session.server_address != server_address or self.session.port != port:
+            self.session.server_address = server_address
+            self.session.port = port
+
+            await self.session.restart()
+            log.info("Changed session DC%s address to %s:%s", dc_id, server_address, port)
+        else:
+            log.info("Session DC%s address is already %s:%s", dc_id, server_address, port)
 
 
     def guess_mime_type(self, filename: str) -> Optional[str]:
