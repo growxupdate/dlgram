@@ -43,13 +43,9 @@ class Auth:
         self,
         client: "pyrogram.Client",
         dc_id: int,
-        server_address: str,
-        port: int,
         test_mode: bool
     ):
         self.dc_id = dc_id
-        self.server_address = server_address
-        self.port = port
         self.test_mode = test_mode
         self.ipv6 = client.ipv6
         self.alt_port = client.alt_port
@@ -92,8 +88,6 @@ class Auth:
         while True:
             self.connection = self.connection_factory(
                 dc_id=self.dc_id,
-                server_address=self.server_address,
-                port=self.port,
                 test_mode=self.test_mode,
                 ipv6=self.ipv6,
                 alt_port=self.alt_port,
