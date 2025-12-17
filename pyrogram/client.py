@@ -1426,7 +1426,8 @@ class Client(Methods):
             port,
             auth_key,
             await self.storage.test_mode(),
-            is_media=is_media
+            is_media,
+            is_cdn
         )
 
         if not temporary:
