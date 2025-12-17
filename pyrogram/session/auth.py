@@ -43,9 +43,9 @@ class Auth:
         self,
         client: "pyrogram.Client",
         dc_id: int,
-        test_mode: bool,
-        server_address: Optional[str] = None,
-        port: Optional[int] = None
+        server_address: str,
+        port: int,
+        test_mode: bool
     ):
         self.dc_id = dc_id
         self.server_address = server_address
