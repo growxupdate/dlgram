@@ -92,6 +92,8 @@ class Auth:
         while True:
             self.connection = self.connection_factory(
                 dc_id=self.dc_id,
+                server_address=self.server_address,
+                port=self.port,
                 test_mode=self.test_mode,
                 ipv6=self.ipv6,
                 alt_port=self.alt_port,
