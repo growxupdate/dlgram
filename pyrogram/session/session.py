@@ -67,11 +67,14 @@ class Session:
         self,
         client: "pyrogram.Client",
         dc_id: int,
+        server_address: Optional[str] = None,
+        port: Optional[int] = None,
         auth_key: bytes,
         test_mode: bool,
         is_media: bool = False,
-        is_cdn: bool = False
+        is_cdn: bool = False,
     ):
+        
         self.client = client
         self.dc_id = dc_id
         self.auth_key = auth_key
@@ -107,6 +110,8 @@ class Session:
         while True:
             self.connection = self.client.connection_factory(
                 dc_id=self.dc_id,
+                server_address=self.server_address,
+                port=self.port,
                 test_mode=self.test_mode,
                 ipv6=self.client.ipv6,
                 alt_port=self.client.alt_port,
