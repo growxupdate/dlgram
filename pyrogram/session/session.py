@@ -67,14 +67,11 @@ class Session:
         self,
         client: "pyrogram.Client",
         dc_id: int,
-        server_address: str,
-        port: int,
         auth_key: bytes,
         test_mode: bool,
         is_media: bool = False,
-        is_cdn: bool = False,
+        is_cdn: bool = False
     ):
-        
         self.client = client
         self.dc_id = dc_id
         self.auth_key = auth_key
@@ -110,8 +107,6 @@ class Session:
         while True:
             self.connection = self.client.connection_factory(
                 dc_id=self.dc_id,
-                server_address=self.server_address,
-                port=self.port,
                 test_mode=self.test_mode,
                 ipv6=self.client.ipv6,
                 alt_port=self.client.alt_port,
@@ -136,9 +131,9 @@ class Session:
                                 app_version=self.client.app_version,
                                 device_model=self.client.device_model,
                                 system_version=self.client.system_version,
-                                system_lang_code=self.client.lang_code,
+                                system_lang_code=self.client.system_lang_code,
                                 lang_code=self.client.lang_code,
-                                lang_pack="",
+                                lang_pack=self.client.lang_pack,
                                 query=raw.functions.help.GetConfig(),
                             )
                         ),
