@@ -67,10 +67,10 @@ class Session:
         self,
         client: "pyrogram.Client",
         dc_id: int,
-        server_address: Optional[str] = None,
-        port: Optional[int] = None,
         auth_key: bytes,
         test_mode: bool,
+        server_address: Optional[str] = None,
+        port: Optional[int] = None,
         is_media: bool = False,
         is_cdn: bool = False,
     ):
