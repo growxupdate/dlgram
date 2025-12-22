@@ -1,5 +1,5 @@
 [project]
-name = "pyrofork"
+name = "dlgram"
 dynamic = ["version"]
 description = "Fork of pyrogram. Elegant, modern and asynchronous Telegram MTProto API framework in Python for users and bots"
 authors = [{ name = "wulan17", email = "mayuri@mayuri.my.id" }]
@@ -30,7 +30,19 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
 ]
-keywords = ["telegram chat messenger mtproto api client library python"]
+keywords = [
+    "telegram",
+    "mtproto",
+    "telegram-api",
+    "telegram-client",
+    "telegram-bot",
+    "pyrogram",
+    "pyrofork",
+    "dlgram",
+    "async",
+    "python",
+    "library"
+]
 
 [tool.hatch.version]
 path = "pyrogram/__init__.py"
