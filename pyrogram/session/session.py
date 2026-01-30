@@ -403,6 +403,47 @@ class Session:
         timeout: float = WAIT_TIMEOUT,
         sleep_threshold: float = SLEEP_THRESHOLD
     ):
+        # ✅ helper: only show YOUR project stack
+        def _project_stack_preview(limit: int = 15):
+            import traceback
+
+            keys = ("GrowXMusic", "/plugins/", "/core/")
+            lines = traceback.format_stack(limit=50)
+
+            filtered = []
+            for ln in lines:
+                if any(k in ln for k in keys):
+                    filtered.append(ln)
+
+            # return last `limit`
+            return "".join(filtered[-limit:]) if filtered else ""
+
+        # ✅ helper: find best caller line (repo file/function/line)
+        def _best_repo_caller():
+            import traceback
+            import os
+
+            keys = ("GrowXMusic", "/plugins/", "/core/")
+            lines = traceback.extract_stack(limit=60)
+
+            # reverse stack: most recent first
+            for fr in reversed(lines):
+                fn = (fr.filename or "").replace("\\", "/")
+                base = os.path.basename(fn)
+
+                # ignore pyrogram internal
+                if "pyrogram" in fn or "pyrofork" in fn:
+                    continue
+
+                # ignore this file itself
+                if base in ("session.py", "__main__.py"):
+                    continue
+
+                if any(k in fn for k in keys):
+                    return f"{base}:{fr.lineno} | func={fr.name}"
+
+            return None
+
         try:
             await asyncio.wait_for(self.is_started.wait(), self.WAIT_TIMEOUT)
         except asyncio.TimeoutError:
@@ -418,16 +459,34 @@ class Session:
         while True:
             try:
                 return await self.send(query, timeout=timeout)
+
             except (FloodWait, FloodPremiumWait) as e:
                 amount = e.value
 
+                # ✅ If too long, raise
                 if amount > sleep_threshold >= 0:
                     raise
 
-                log.warning('[%s] Waiting for %s seconds before continuing (required by "%s")',
-                            self.client.name, amount, query_name)
+                # ✅ original warning
+                log.warning(
+                    '[%s] Waiting for %s seconds before continuing (required by "%s")',
+                    self.client.name, amount, query_name
+                )
+
+                # ✅ NEW: show caller info
+                caller = _best_repo_caller()
+                if caller:
+                    log.warning("✅ FloodWait Triggered From YOUR CODE => %s", caller)
+                else:
+                    log.warning("✅ FloodWait Triggered From BACKGROUND (caller not found in repo)")
+
+                # ✅ NEW: show stack trace preview (only project files)
+                st = _project_stack_preview()
+                if st:
+                    log.warning("🔎 FloodWait Stack Trace (project only):\n%s", st)
 
                 await asyncio.sleep(amount)
+
             except (OSError, InternalServerError, ServiceUnavailable) as e:
                 if retries == 0:
                     raise e from None
