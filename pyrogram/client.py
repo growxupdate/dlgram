@@ -564,7 +564,38 @@ class Client(Methods):
 
         self.parse_mode = parse_mode
 
+    async def _runfor_allowed(self, chat_id: int) -> bool:
+        # feature disabled
+        if self.run_for_min is None or self.run_for_max is None:
+            return True
 
+        now = datetime.now()
+
+        # ✅ from cache
+        data = self._runfor_cache.get(chat_id)
+        if data:
+            members_count, expire = data
+            if now < expire:
+                return self.run_for_min <= members_count <= self.run_for_max
+
+        # ✅ fetch chat
+        try:
+            chat = await self.get_chat(chat_id)
+        except Exception:
+            return True  # safe allow
+
+        # only restrict groups/supergroups
+        if chat.type not in (enums.ChatType.GROUP, enums.ChatType.SUPERGROUP):
+            return True
+
+        members_count = chat.members_count or 0
+
+        # ✅ save cache
+        self._runfor_cache[chat_id] = (members_count, now + self._runfor_ttl)
+
+        return self.run_for_min <= members_count <= self.run_for_max
+
+    
     async def fetch_peers(self, peers: List[Union[raw.types.User, raw.types.Chat, raw.types.Channel]]) -> bool:
         is_min = False
         parsed_peers = []
@@ -685,7 +716,24 @@ class Client(Methods):
                                 users.update({u.id: u for u in diff.users})
                                 chats.update({c.id: c for c in diff.chats})
 
+                # ✅ RunFor filter (groups range allow only)
+                if self.run_for_min is not None and self.run_for_max is not None:
+                    peer = getattr(getattr(update, "message", None), "peer_id", None)
+                    chat_id = None
+
+                    if peer:
+                        # group
+                        if getattr(peer, "chat_id", None):
+                            chat_id = -peer.chat_id
+                        # supergroup/channel
+                        elif getattr(peer, "channel_id", None):
+                            chat_id = utils.get_channel_id(peer.channel_id)
+
+                    if chat_id and not await self._runfor_allowed(chat_id):
+                        continue
+
                 self.dispatcher.updates_queue.put_nowait((update, users, chats))
+
         elif isinstance(updates, (raw.types.UpdateShortMessage, raw.types.UpdateShortChatMessage)):
             await self.storage.update_state(
                 (
@@ -705,7 +753,24 @@ class Client(Methods):
                 )
             )
 
+
             if diff.new_messages:
+
+                # ✅ RunFor filter (short updates)
+                if self.run_for_min is not None and self.run_for_max is not None:
+                    msg = diff.new_messages[0]
+                    peer = getattr(msg, "peer_id", None)
+                    chat_id = None
+
+                    if peer:
+                        if getattr(peer, "chat_id", None):
+                            chat_id = -peer.chat_id
+                        elif getattr(peer, "channel_id", None):
+                            chat_id = utils.get_channel_id(peer.channel_id)
+
+                    if chat_id and not await self._runfor_allowed(chat_id):
+                        return  # ignore
+
                 self.dispatcher.updates_queue.put_nowait((
                     raw.types.UpdateNewMessage(
                         message=diff.new_messages[0],
@@ -715,6 +780,7 @@ class Client(Methods):
                     {u.id: u for u in diff.users},
                     {c.id: c for c in diff.chats}
                 ))
+            
             else:
                 if diff.other_updates:  # The other_updates list can be empty
                     self.dispatcher.updates_queue.put_nowait((diff.other_updates[0], {}, {}))
