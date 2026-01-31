@@ -1,22 +1,3 @@
-#  Pyrofork - Telegram MTProto API Client Library for Python
-#  Copyright (C) 2017-present Dan <https://github.com/delivrance>
-#  Copyright (C) 2022-present Mayuri-Chan <https://github.com/Mayuri-Chan>
-#
-#  This file is part of Pyrofork.
-#
-#  Pyrofork is free software: you can redistribute it and/or modify
-#  it under the terms of the GNU Lesser General Public License as published
-#  by the Free Software Foundation, either version 3 of the License, or
-#  (at your option) any later version.
-#
-#  Pyrofork is distributed in the hope that it will be useful,
-#  but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#  GNU Lesser General Public License for more details.
-#
-#  You should have received a copy of the GNU Lesser General Public License
-#  along with Pyrofork.  If not, see <http://www.gnu.org/licenses/>.
-
 import asyncio
 import functools
 import inspect
@@ -244,6 +225,8 @@ class Client(Methods):
         name: str,
         api_id: Optional[Union[int, str]] = None,
         api_hash: Optional[str] = None,
+        run_for: Optional[Union[int, str]] = None,
+        run_for_cache: Optional[int] = None,
         app_version: str = APP_VERSION,
         device_model: str = DEVICE_MODEL,
         system_version: str = SYSTEM_VERSION,
@@ -279,6 +262,34 @@ class Client(Methods):
         self.name = name
         self.api_id = int(api_id) if api_id else None
         self.api_hash = api_hash
+        
+        self.run_for = run_for
+        self.run_for_cache = run_for_cache
+        self.run_for_min = None
+        self.run_for_max = None
+        # ✅ parse run_for
+        if isinstance(run_for, int):
+            # old behaviour: 0 - run_for
+            self.run_for_min = 0
+            self.run_for_max = run_for
+        elif isinstance(run_for, str):
+            run_for = run_for.strip().replace(" ", "")
+            # allow formats: "0-500", "500-1000"
+            m = re.match(r"^(\d+)-(\d+)$", run_for)
+            if not m:
+                raise ValueError('run_for must be int or string like "0-500" or "500-1000"')
+            self.run_for_min = int(m.group(1))
+            self.run_for_max = int(m.group(2))
+            if self.run_for_min > self.run_for_max:
+                raise ValueError("run_for range invalid: min > max")
+
+        if self.run_for_min is not None and self.run_for_max is not None:
+            self._runfor_cache = {}
+            if self.run_for_cache:
+                self._runfor_ttl = timedelta(hours=self.run_for_cache)
+            else:
+                self._runfor_ttl = timedelta(hours=12)
+
         self.app_version = app_version
         self.device_model = device_model
         self.system_version = system_version
@@ -552,6 +563,7 @@ class Client(Methods):
         """
 
         self.parse_mode = parse_mode
+
 
     async def fetch_peers(self, peers: List[Union[raw.types.User, raw.types.Chat, raw.types.Channel]]) -> bool:
         is_min = False
